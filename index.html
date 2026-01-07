@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>총무관리 시스템</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- 헤더 -->
+        <header class="header">
+            <div class="header-content">
+                <h1>📊 총무관리 시스템</h1>
+                <div class="header-actions">
+                    <span class="date" id="currentDate"></span>
+                    <button class="btn btn-export" onclick="exportData()">📥 데이터 내보내기</button>
+                </div>
+            </div>
+        </header>
+
+        <!-- 네비게이션 -->
+        <nav class="nav">
+            <button class="nav-btn active" data-tab="dashboard" onclick="switchTab('dashboard')">
+                📈 대시보드
+            </button>
+            <button class="nav-btn" data-tab="budget" onclick="switchTab('budget')">
+                💰 예산 관리
+            </button>
+            <button class="nav-btn" data-tab="expense" onclick="switchTab('expense')">
+                💳 지출 관리
+            </button>
+            <button class="nav-btn" data-tab="members" onclick="switchTab('members')">
+                👥 회원 관리
+            </button>
+            <button class="nav-btn" data-tab="report" onclick="switchTab('report')">
+                📄 보고서
+            </button>
+        </nav>
+
+        <!-- 메인 콘텐츠 -->
+        <main class="main">
+            <!-- 대시보드 탭 -->
+            <div id="dashboard" class="tab-content active">
+                <h2>대시보드</h2>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon">💰</div>
+                        <div class="stat-info">
+                            <h3>총 예산</h3>
+                            <p class="stat-value" id="totalBudget">0원</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">💳</div>
+                        <div class="stat-info">
+                            <h3>총 지출</h3>
+                            <p class="stat-value" id="totalExpense">0원</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">💵</div>
+                        <div class="stat-info">
+                            <h3>잔액</h3>
+                            <p class="stat-value" id="balance">0원</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">👥</div>
+                        <div class="stat-info">
+                            <h3>총 회원</h3>
+                            <p class="stat-value" id="totalMembers">0명</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="recent-activities">
+                    <h3>최근 활동</h3>
+                    <div id="recentActivities" class="activity-list"></div>
+                </div>
+            </div>
+
+            <!-- 예산 관리 탭 -->
+            <div id="budget" class="tab-content">
+                <h2>예산 관리</h2>
+                <div class="form-card">
+                    <h3>예산 추가</h3>
+                    <form id="budgetForm" onsubmit="addBudget(event)">
+                        <div class="form-group">
+                            <label>항목명</label>
+                            <input type="text" name="category" required placeholder="예: 운영비">
+                        </div>
+                        <div class="form-group">
+                            <label>예산액</label>
+                            <input type="number" name="amount" required placeholder="금액 입력">
+                        </div>
+                        <div class="form-group">
+                            <label>설명</label>
+                            <textarea name="description" placeholder="예산 설명"></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-primary">예산 추가</button>
+                    </form>
+                </div>
+
+                <div class="data-table">
+                    <h3>예산 목록</h3>
+                    <table id="budgetTable">
+                        <thead>
+                            <tr>
+                                <th>항목</th>
+                                <th>예산액</th>
+                                <th>설명</th>
+                                <th>등록일</th>
+                                <th>작업</th>
+                            </tr>
+                        </thead>
+                        <tbody id="budgetTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 지출 관리 탭 -->
+            <div id="expense" class="tab-content">
+                <h2>지출 관리</h2>
+                <div class="form-card">
+                    <h3>지출 추가</h3>
+                    <form id="expenseForm" onsubmit="addExpense(event)">
+                        <div class="form-group">
+                            <label>지출 항목</label>
+                            <select name="category" required id="expenseCategory">
+                                <option value="">선택하세요</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>지출액</label>
+                            <input type="number" name="amount" required placeholder="금액 입력">
+                        </div>
+                        <div class="form-group">
+                            <label>지출 날짜</label>
+                            <input type="date" name="date" required>
+                        </div>
+                        <div class="form-group">
+                            <label>사용처</label>
+                            <input type="text" name="vendor" required placeholder="예: 편의점">
+                        </div>
+                        <div class="form-group">
+                            <label>설명</label>
+                            <textarea name="description" placeholder="지출 상세 내용"></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-primary">지출 추가</button>
+                    </form>
+                </div>
+
+                <div class="data-table">
+                    <h3>지출 내역</h3>
+                    <table id="expenseTable">
+                        <thead>
+                            <tr>
+                                <th>날짜</th>
+                                <th>항목</th>
+                                <th>금액</th>
+                                <th>사용처</th>
+                                <th>설명</th>
+                                <th>작업</th>
+                            </tr>
+                        </thead>
+                        <tbody id="expenseTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 회원 관리 탭 -->
+            <div id="members" class="tab-content">
+                <h2>회원 관리</h2>
+                <div class="form-card">
+                    <h3>회원 추가</h3>
+                    <form id="memberForm" onsubmit="addMember(event)">
+                        <div class="form-group">
+                            <label>이름</label>
+                            <input type="text" name="name" required placeholder="회원 이름">
+                        </div>
+                        <div class="form-group">
+                            <label>이메일</label>
+                            <input type="email" name="email" required placeholder="example@email.com">
+                        </div>
+                        <div class="form-group">
+                            <label>전화번호</label>
+                            <input type="tel" name="phone" placeholder="010-0000-0000">
+                        </div>
+                        <div class="form-group">
+                            <label>역할</label>
+                            <select name="role" required>
+                                <option value="member">일반 회원</option>
+                                <option value="admin">관리자</option>
+                                <option value="treasurer">총무</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="btn btn-primary">회원 추가</button>
+                    </form>
+                </div>
+
+                <div class="data-table">
+                    <h3>회원 목록</h3>
+                    <table id="memberTable">
+                        <thead>
+                            <tr>
+                                <th>이름</th>
+                                <th>이메일</th>
+                                <th>전화번호</th>
+                                <th>역할</th>
+                                <th>가입일</th>
+                                <th>작업</th>
+                            </tr>
+                        </thead>
+                        <tbody id="memberTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 보고서 탭 -->
+            <div id="report" class="tab-content">
+                <h2>보고서</h2>
+                <div class="report-filters">
+                    <div class="form-group">
+                        <label>기간 선택</label>
+                        <select id="reportPeriod" onchange="generateReport()">
+                            <option value="month">이번 달</option>
+                            <option value="quarter">분기</option>
+                            <option value="year">올해</option>
+                            <option value="all">전체</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="report-summary">
+                    <h3>요약</h3>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <h4>총 예산</h4>
+                            <p class="stat-value" id="reportBudget">0원</p>
+                        </div>
+                        <div class="stat-card">
+                            <h4>총 지출</h4>
+                            <p class="stat-value" id="reportExpense">0원</p>
+                        </div>
+                        <div class="stat-card">
+                            <h4>잔액</h4>
+                            <p class="stat-value" id="reportBalance">0원</p>
+                        </div>
+                        <div class="stat-card">
+                            <h4>예산 사용률</h4>
+                            <p class="stat-value" id="reportUsage">0%</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="report-detail">
+                    <h3>항목별 지출</h3>
+                    <div id="categoryBreakdown" class="category-list"></div>
+                </div>
+            </div>
+        </main>
+
+        <!-- 푸터 -->
+        <footer class="footer">
+            <p>&copy; 2024 총무관리 시스템. All rights reserved.</p>
+        </footer>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
