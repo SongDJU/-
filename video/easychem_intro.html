@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>EASYCHEM 대모험</title>
+<style>
+  @font-face { font-family:'Galmuri11'; src:url('assets/fonts/Galmuri11.ttf'); }
+  @font-face { font-family:'Galmuri11B'; src:url('assets/fonts/Galmuri11-Bold.ttf'); }
+  @font-face { font-family:'Galmuri14'; src:url('assets/fonts/Galmuri14.ttf'); }
+  html, body { margin:0; background:#000; height:100%; }
+  body { display:flex; align-items:center; justify-content:center; }
+  #out { width:100vw; max-height:100vh; aspect-ratio:16/9; object-fit:contain; image-rendering:pixelated; cursor:pointer; }
+  #hint { position:fixed; bottom:12px; left:0; right:0; text-align:center; color:#fff; font:14px 'Galmuri11', sans-serif; opacity:.7; }
+</style>
+</head>
+<body>
+<canvas id="out" width="1920" height="1080"></canvas>
+<div id="hint">클릭하면 사운드와 함께 처음부터 재생</div>
+<script src="timeline.js"></script>
+<script>
+// ─────────────────────────────────────────────────────────────
+// 480×270 저해상도 버퍼에 그린 뒤 4배(nearest) 확대 → 도트 게임 느낌
+// renderAt(t)는 시간 t만으로 화면이 결정됨(프레임 단위 렌더링용)
+// ─────────────────────────────────────────────────────────────
+const W = 480, H = 270, SC = 4;
+const L = document.createElement('canvas'); L.width = W; L.height = H;
+const c = L.getContext('2d');
+const O = document.getElementById('out'), o = O.getContext('2d');
+
+const cl = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const eo = x => 1 - Math.pow(1 - cl(x), 3);
+const backOut = x => { x = cl(x); const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
+function bounce(x) { x = cl(x); const n = 7.5625, d = 2.75;
+  if (x < 1 / d) return n * x * x; if (x < 2 / d) return n * (x -= 1.5 / d) * x + .75;
+  if (x < 2.5 / d) return n * (x -= 2.25 / d) * x + .9375; return n * (x -= 2.625 / d) * x + .984375; }
+const rnd = i => { const x = Math.sin(i * 12.9898 + 78.233) * 43758.5453; return x - Math.floor(x); };
+const lerp = (a, b, p) => a + (b - a) * cl(p);
+
+// ── 기본 도형 ──
+function R(x, y, w, h, col, ctx = c) { ctx.fillStyle = col; ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h)); }
+function circ(cx, cy, r, col, ctx = c) { ctx.fillStyle = col;
+  for (let y = -r; y <= r; y++) { const w = Math.floor(Math.sqrt(r * r - y * y + r * 0.6)); ctx.fillRect(Math.round(cx - w), Math.round(cy + y), w * 2 + 1, 1); } }
+function mk(w, h, fn) { const cv = document.createElement('canvas'); cv.width = w; cv.height = h; fn(cv.getContext('2d')); return cv; }
+function blit(cv, x, y, sc = 1) { c.imageSmoothingEnabled = false; c.drawImage(cv, Math.round(x), Math.round(y), cv.width * sc, cv.height * sc); }
+function sparkle(x, y, s, col) { R(x - s, y, s * 2 + 1, 1, col); R(x, y - s, 1, s * 2 + 1, col); if (s > 2) R(x - 1, y - 1, 3, 3, col); }
+function win(x, y, w, h, bg = '#0c1445', bd = '#ffffff', inl = '#5b8cff') {
+  R(x, y, w, h, '#000'); R(x + 1, y + 1, w - 2, h - 2, bd); R(x + 3, y + 3, w - 6, h - 6, inl); R(x + 4, y + 4, w - 8, h - 8, bg); }
+
+// ── 도트 폰트 텍스트(알파 임계값으로 안티앨리어싱 제거) ──
+const FF = { s: ['12px Galmuri11', 12], b: ['12px Galmuri11B', 12], m: ['15px Galmuri14', 15] };
+const TC = new Map();
+function txt(str, f, col) {
+  const key = f + '|' + col + '|' + str; if (TC.has(key)) return TC.get(key);
+  const [font, size] = FF[f]; const m = mk(1, 1, () => {}).getContext('2d'); m.font = font;
+  const w = Math.ceil(m.measureText(str).width) + 2, h = size + 5;
+  const cv = mk(w, h, x => { x.font = font; x.textBaseline = 'top'; x.fillStyle = col; x.fillText(str, 1, 1);
+    const d = x.getImageData(0, 0, w, h); for (let i = 3; i < d.data.length; i += 4) d.data[i] = d.data[i] > 110 ? 255 : 0; x.putImageData(d, 0, 0); });
+  TC.set(key, cv); return cv;
+}
+function T(str, x, y, { f = 's', col = '#fff', sc = 1, al = 'l', sh = null, ol = null } = {}) {
+  const bm = txt(str, f, col); const w = bm.width * sc;
+  const X = al === 'c' ? x - w / 2 : al === 'r' ? x - w : x;
+  if (ol) { const ob = txt(str, f, ol); for (const [dx, dy] of [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[1,1],[-1,1],[1,-1]]) blit(ob, X + dx * sc, y + dy * sc, sc); }
+  if (sh) blit(txt(str, f, sh), X + sc, y + sc, sc);
+  blit(bm, X, y, sc); return w;
+}
+const tw = (str, n) => str.slice(0, Math.max(0, Math.floor(n)));
+
+// ── 스프라이트 ──
+const PAL = { k:'#1a1c2c', h:'#29366f', s:'#f4c6a0', w:'#f4f4f4', g:'#94a3b8', b:'#0096d6', y:'#ffcd4a', c:'#73eff7', r:'#e43b44', d:'#3b5dc9' };
+function spr(rows, pal = PAL) { return mk(rows[0].length, rows.length, x => rows.forEach((row, j) => [...row].forEach((ch, i) => { if (ch !== '.') R(i, j, 1, 1, pal[ch], x); }))); }
+const HEAD = ['...kkkkk....','..khhhhhk...','.khhhhhhhk..','.khhkcckcck.','.khsssssssk.','..kssssssk..','...kkkkkk...','..kwwwwwwk..','.kwwwbwwwwk.','.kwkwbwwkwk.','.kskwwwwwksk','..kwwwwwwk..'];
+const HERO = {
+  idle: spr([...HEAD, '..kbbkkbbk..', '..kbk..kbk..', '..kkk..kkk..', '.kkkk..kkkk.']),
+  runA: spr([...HEAD, '..kbbkkbbk..', '.kbk....kbk.', 'kkk......kkk', '............']),
+  runB: spr([...HEAD, '...kbbbbk...', '....kbbk....', '....kkkk....', '...kkkkk....']),
+};
+const DROP = spr(['...k...','..kbk..','..kbk..','.kbbbk.','kbwbbbk','kbwbbbk','kbbbbbk','.kbbbk.','..kkk..']);
+const ICON = {
+  glue: spr(['.......kk.......','......kggk......','......kggk......','.....kkkkkk.....','....kbbbbbbk....','....kbwwwwbk....','....kbwyywbk....','....kbwyywbk....','....kbwwwwbk....','....kbbbbbbk....','....kbbbbbbk....','....kbbbbbbk....','.....kkkkkk.....','......kyyk......','.......yy.......','.......y........']),
+  nano: mk(16, 16, x => { const P = [[5,6,3,'#0096d6'],[11,5,3,'#29b6f6'],[9,11,3,'#3b5dc9'],[3,12,2,'#73eff7'],[13,12,2,'#0096d6']];
+    for (const [a, b] of [[0,1],[0,2],[1,2],[2,3],[2,4]]) for (let s = 0; s <= 1; s += .1) R(P[a][0] + (P[b][0]-P[a][0])*s, P[a][1] + (P[b][1]-P[a][1])*s, 1, 1, '#c8d4e8', x);
+    for (const [cx, cy, r, col] of P) { circ(cx, cy, r + 1, PAL.k, x); circ(cx, cy, r, col, x); R(cx - 1, cy - 1, 1, 1, '#fff', x); } }),
+  marble: mk(16, 16, x => { R(1,2,14,13,PAL.k,x); R(2,3,12,11,'#eef0f5',x); R(2,3,12,2,'#ffffff',x); R(2,12,12,2,'#c8ccd8',x);
+    for (const [a,b] of [[3,5],[4,6],[5,6],[6,7],[7,9],[8,10],[9,10],[10,11],[11,12]]) R(a,b,1,1,'#8a93a8',x);
+    for (const [a,b] of [[9,4],[10,5],[11,5],[12,6]]) R(a,b,1,1,'#b0b8c8',x); }),
+  film: mk(16, 16, x => { R(1,2,14,7,PAL.k,x); R(2,3,12,5,'#7a8ca8',x); R(2,3,12,1,'#b8c6dc',x); R(1,3,2,5,'#4a5a78',x);
+    R(3,8,11,7,PAL.k,x); R(4,8,9,6,'#9be7ff',x); for (let i=0;i<4;i++) R(6+i,9+i,1,1,'#ffffff',x); R(13,4,2,3,'#c8d4e8',x); }),
+  trophy: mk(16, 16, x => { R(3,1,10,8,PAL.k,x); R(4,2,8,6,PAL.y,x); R(5,3,1,3,'#fff',x); R(1,2,3,1,PAL.k,x); R(1,2,1,4,PAL.k,x); R(1,5,3,1,PAL.k,x);
+    R(12,2,3,1,PAL.k,x); R(14,2,1,4,PAL.k,x); R(12,5,3,1,PAL.k,x); R(6,9,4,3,PAL.k,x); R(7,9,2,2,'#e0a030',x); R(3,12,10,3,PAL.k,x); R(4,12,8,2,'#b86f50',x); }),
+  hq: mk(16, 16, x => { R(8,0,1,5,PAL.k,x); R(9,0,5,3,PAL.r,x); R(2,4,12,12,PAL.k,x); R(3,5,10,10,'#3b5dc9',x);
+    for (let i=0;i<3;i++) for (let j=0;j<2;j++) R(4+i*3,6+j*3,2,2,PAL.y,x); R(7,12,2,3,PAL.k,x); }),
+  factory: mk(16, 16, x => { R(11,1,3,7,PAL.k,x); R(12,1,1,6,'#6b7280',x); R(1,7,14,9,PAL.k,x); R(2,8,12,7,'#94a3b8',x);
+    for (let i=0;i<3;i++) for (let s=0;s<4;s++) R(2+i*4+s,7-s,1,1+s,PAL.k,x);
+    for (let i=0;i<4;i++) R(3+i*3,10,2,2,PAL.c,x); R(7,12,2,3,PAL.k,x); }),
+};
+
+// ── 로고(흰 판넬 위 CI) ──
+const LOGO = new Image(); let LG = null;
+const ready = Promise.all([
+  new Promise(r => { LOGO.onload = r; LOGO.src = 'assets/logo.png'; }),
+  document.fonts.load(FF.s[0], '가A'), document.fonts.load(FF.b[0], '가A'), document.fonts.load(FF.m[0], '가A'),
+]).then(() => {
+  const lw = 220, lh = Math.round(lw * LOGO.height / LOGO.width);
+  LG = mk(lw + 24, lh + 18, x => { R(0, 0, lw + 24, lh + 18, PAL.k, x); R(2, 2, lw + 20, lh + 14, '#fff', x); R(2, lh + 12, lw + 20, 4, '#d6e4f5', x);
+    x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high'; x.drawImage(LOGO, 12, 7, lw, lh); });
+});
+window.ready = ready;
+function plate(cx, cy, s = 1) {
+  const w = LG.width * s, h = LG.height * s;
+  c.globalAlpha = .45; R(cx - w / 2 + 4, cy - h / 2 + 4, w, h, '#000'); c.globalAlpha = 1;
+  c.imageSmoothingEnabled = false; c.drawImage(LG, Math.round(cx - w / 2), Math.round(cy - h / 2), Math.round(w), Math.round(h));
+}
+
+// ── 공통 배경 요소 ──
+function stars(t, n = 90, speed = 12, maxY = 180) {
+  for (let i = 0; i < n; i++) {
+    const x = ((rnd(i) * 520 - t * speed * (0.3 + rnd(i + 7))) % 520 + 520) % 520 - 20, y = rnd(i + 50) * maxY;
+    const tw_ = Math.sin(t * 5 + i) > 0.6; const col = i % 7 === 0 ? PAL.c : '#ffffff';
+    if (i % 11 === 0 && tw_) sparkle(x, y, 2, col); else R(x, y, 1, 1, tw_ ? col : '#8890c8');
+  }
+}
+function heroAt(x, y, t, sc, moving = true) { const fr = !moving ? HERO.idle : (Math.floor(t * 10) % 2 ? HERO.runA : HERO.runB); blit(fr, x, y, sc); }
+
+// ═════════════ SCENE 1: 타이틀 (0~3.5) ═════════════
+function sTitle(t) {
+  R(0, 0, W, H, '#0b0f2a');
+  for (let i = 0; i < 6; i++) R(0, 120 + i * 10, W, 10, ['#0f1438','#141a45','#1c1f55','#281f62','#3a1f6b','#4f1d70'][i]);
+  stars(t, 90, 14, 175);
+  const hz = 180;
+  for (let x = 0; x < W; x++) { const h = Math.max(0, 22 - Math.abs(((x + 40) % 140) - 70) * 0.5) + Math.max(0, 14 - Math.abs(((x + 100) % 90) - 45) * 0.45);
+    R(x, hz - h, 1, h, '#2a1a5e'); }
+  R(0, hz, W, H - hz, '#140a33');
+  for (let k = 0; k < 14; k++) { const z = (k + (t * 1.6) % 1) / 14; R(0, Math.round(hz + Math.pow(z, 2.2) * (H - hz)), W, 1, '#b13ecf'); }
+  for (let i = -9; i <= 9; i++) for (let y = hz + 4; y < H; y += 1) { const f = (y - hz) / (H - hz); R(240 + i * 64 * f, y, 1, 1, '#7b5cff'); }
+  R(0, hz, W, 1, PAL.c);
+  const py = lerp(-90, 72, bounce(t / 0.62));
+  plate(240, py);
+  if (t > 0.85) T(tw('~ 정밀화학소재 대모험 ~', (t - 0.85) * 22), 240, 122, { f: 'b', sc: 2, col: PAL.y, ol: PAL.k, al: 'c' });
+  if (t > 1.5) { const fast = t > 2.6; const on = fast ? Math.floor(t * 14) % 2 : Math.floor(t * 2.5) % 2 === 0;
+    if (on) T('PRESS START', 240, 196, { f: 'b', sc: 2, col: fast ? PAL.c : '#fff', ol: PAL.k, al: 'c' });
+    if (!fast) { const bx = 240 - 76 + (Math.floor(t * 4) % 2) * 2; R(bx, 204, 3, 7, PAL.y); R(bx + 3, 205, 2, 5, PAL.y); R(bx + 5, 206, 2, 3, PAL.y); } }
+  T('© 2001-2026 EASYCHEM CO., LTD.', 240, 250, { col: '#8890c8', al: 'c' });
+  if (t > 2.6 && t < 2.8) { c.globalAlpha = 1 - (t - 2.6) / 0.2; R(0, 0, W, H, '#fff'); c.globalAlpha = 1; }
+}
+
+// ═════════════ SCENE 2: 스테이지 카드 (3.5~5.5) ═════════════
+function sCard(t) {
+  const lt = t - 3.5; R(0, 0, W, H, '#000');
+  T('WORLD 1-1', 240, 46, { f: 'b', sc: 3, al: 'c' });
+  T('충북 청주', 240, 94, { f: 'b', sc: 2, col: PAL.y, al: 'c' });
+  heroAt(176, 124, t, 3, false);
+  T('×', 232, 146, { f: 'b', sc: 2 });
+  T('25', 256, 140, { f: 'b', sc: 3 });
+  T('창립 25년차 · SINCE 2001', 240, 186, { col: '#94a3b8', al: 'c' });
+  if (lt > 0.4) T(tw('MISSION: 수입 의존 소재를 국산화하라!', (lt - 0.4) * 30), 240, 220, { f: 'b', col: PAL.c, al: 'c', sc: 1 });
+}
+
+// ═════════════ SCENE 3: 횡스크롤 스테이지 (5.5~11) ═════════════
+const SPD = 80, HX = 110, GY = 222;
+const camAt = t => (t - 5.5) * SPD;
+const heroW = t => camAt(t) + HX + 12;
+const ITEMS = [{ tj: TL.jumps[0], icon: 'nano', name: '단분산 나노입자' }, { tj: TL.jumps[1], icon: 'glue', name: '기능성 PP 접착제' }];
+function jumpY(t) { for (const tj of TL.jumps) if (t >= tj && t < tj + 0.5) { const p = (t - tj) / 0.5; return -176 * p * (1 - p); } return 0; }
+function sStage(t) {
+  const lt = t - 5.5, cam = camAt(t);
+  const sky = ['#3d9be9','#4aa8ee','#58b6f2','#67c3f5','#78cff7','#8adaf8'];
+  sky.forEach((col, i) => R(0, i * 30, W, 30, col)); R(0, 180, W, 90, '#9ce3f8');
+  for (let i = 0; i < 7; i++) { const x = ((rnd(i + 3) * 700 - cam * 0.2) % 700 + 700) % 700 - 110, y = 20 + rnd(i + 9) * 70;
+    for (const [dx, dy, r] of [[0,8,10],[14,2,13],[30,8,10],[15,10,11]]) circ(x + dx, y + dy, r, '#ffffff'); R(x - 10, y + 12, 52, 7, '#ffffff'); R(x - 8, y + 19, 48, 2, '#d7eefc'); }
+  for (let x = 0; x < W; x++) { const wx = x + cam * 0.3; const h = 46 + 20 * Math.sin(wx * 0.018) + 10 * Math.sin(wx * 0.05 + 1);
+    R(x, 205 - h, 1, h + 20, '#5fa8a0'); }
+  for (let x = 0; x < W; x++) { const wx = x + cam * 0.45; const h = 30 + 14 * Math.sin(wx * 0.025 + 2) + 6 * Math.sin(wx * 0.07);
+    R(x, 212 - h, 1, h + 10, '#3a8f5b'); }
+  for (let i = 0; i < 40; i++) { const bw = 26 + Math.floor(rnd(i) * 22), bh = 34 + Math.floor(rnd(i + 20) * 56);
+    const x = ((i * 50 - cam * 0.65) % 2000 + 2000) % 2000 - 60; if (x > W) continue;
+    R(x, GY - bh, bw, bh, '#2d4b86'); R(x, GY - bh, bw, 2, '#3f63a8');
+    for (let wy = GY - bh + 6; wy < GY - 6; wy += 8) for (let wx = x + 4; wx < x + bw - 4; wx += 7) if (rnd(wx * 3 + wy) > 0.45) R(wx, wy, 3, 4, '#ffe28a');
+    if (i === 3) { win(x - 6, GY - bh - 22, 44, 20, '#e43b44', '#fff', '#fff'); T('청주', x + 16, GY - bh - 18, { f: 'b', al: 'c' }); } }
+  const fx = heroW(10.9) + 30 - cam;
+  if (fx < W + 10) { R(fx, GY - 96, 140, 96, PAL.k); R(fx + 2, GY - 94, 136, 94, '#dfe7f2');
+    for (let i = 0; i < 4; i++) for (let s = 0; s < 10; s++) R(fx + 2 + i * 34 + s * 3, GY - 106 + s * 1.2, 3, 12 - s * 1.2, '#7a8ca8');
+    R(fx + 100, GY - 140, 16, 46, PAL.k); R(fx + 102, GY - 138, 12, 44, '#94a3b8'); R(fx + 100, GY - 132, 16, 4, PAL.r);
+    for (let k = 0; k < 4; k++) { const p = ((t * 0.8 + k * 0.25) % 1); circ(fx + 108 + p * 16, GY - 146 - p * 40, 4 + p * 6, `rgba(240,244,250,${1 - p})`); }
+    win(fx + 14, GY - 80, 112, 24, '#0096d6', '#fff', '#29366f'); T('EASYCHEM', fx + 70, GY - 75, { f: 'b', al: 'c' });
+    for (let i = 0; i < 4; i++) R(fx + 12 + i * 32, GY - 46, 18, 14, PAL.c); R(fx + 56, GY - 30, 28, 30, '#29366f'); }
+  R(0, GY, W, H - GY, '#b86f50'); R(0, GY, W, 5, '#38b764'); R(0, GY + 5, W, 2, '#257953');
+  for (let x = -((cam) % 8); x < W; x += 8) R(x, GY - 2, 2, 2, '#38b764');
+  for (let row = 0; row < 5; row++) { const y = GY + 7 + row * 10; R(0, y, W, 1, '#8a4a36');
+    for (let x = -((cam + row * 12) % 24); x < W; x += 24) R(x, y, 1, 10, '#8a4a36'); }
+  ITEMS.forEach(({ tj, icon }) => {
+    const tb = tj + 0.25, bx = heroW(tb) - 10 - cam, by = GY - 96 + (t >= tb && t < tb + 0.12 ? -4 : 0);
+    if (bx < -30 || bx > W + 30) return;
+    if (t >= tb) { const p = eo((t - tb) / 0.4); blit(ICON[icon], bx - 6, by - 4 - 30 * p + Math.sin(t * 6) * 2 * (p >= 1), 2);
+      if (t < tb + 1.2) for (let k = 0; k < 4; k++) { const a = t * 6 + k * 1.57; sparkle(bx + 10 + Math.cos(a) * 22, by - 20 + Math.sin(a) * 16, 2, '#fff'); } }
+    R(bx, by, 20, 20, PAL.k);
+    if (t < tb) { R(bx + 1, by + 1, 18, 18, PAL.y); R(bx + 1, by + 1, 18, 2, '#fff2b0'); T('?', bx + 10, by + 3, { f: 'b', col: '#b86f50', al: 'c' }); }
+    else { R(bx + 1, by + 1, 18, 18, '#8b6b4a'); R(bx + 3, by + 3, 2, 2, '#5a4030'); R(bx + 15, by + 3, 2, 2, '#5a4030'); }
+  });
+  let got = 0;
+  TL.coins.forEach((tc, i) => { const x = heroW(tc) - cam - 3, y = GY - 42;
+    if (t < tc) { const sq = Math.abs(Math.sin(t * 5 + i)); c.imageSmoothingEnabled = false; c.drawImage(DROP, Math.round(x + 3.5 - 3.5 * sq * 2 / 2), y + Math.round(Math.sin(t * 4 + i) * 2), Math.max(2, Math.round(7 * sq * 2 / 2)) * 2, 18); }
+    else { got++; if (t < tc + 0.5) { const p = (t - tc) / 0.5; T('+100', x + 6, y - 6 - p * 18, { f: 'b', col: '#fff', ol: PAL.k, al: 'c' }); sparkle(x + 6, y + 8, 3 - Math.floor(p * 3), '#fff'); } } });
+  const items = ITEMS.filter(it => t >= it.tj + 0.25).length;
+  heroAt(HX, GY - 32 + jumpY(t), t, 2, true);
+  const hud = [['SCORE', String(got * 100 + items * 1000).padStart(6, '0')], ['DROP', '×' + String(got).padStart(2, '0')], ['WORLD', '1-1'], ['YEAR', String(Math.floor(lerp(2001, 2026, (t - 5.5) / 21)))]];
+  hud.forEach(([a, b], i) => { const x = 22 + i * 118; T(a, x, 6, { f: 'b', sh: PAL.k }); T(b, x + (i === 1 ? 10 : 0), 20, { f: 'b', sh: PAL.k, col: i === 1 ? PAL.y : '#fff' }); });
+  blit(DROP, 140, 22, 1);
+  if (lt < 1.3 && Math.floor(lt * 8) % 2 === 0 || (lt >= 1.3 && lt < 1.4)) T('MISSION START!', 240, 90, { f: 'b', sc: 3, col: PAL.y, ol: PAL.k, al: 'c' });
+  ITEMS.forEach(({ tj, icon, name }) => {
+    const t0 = tj + 0.4, t1 = tj + 1.75; if (t < t0 || t > t1) return;
+    const y = lerp(-70, 48, backOut((t - t0) / 0.35)) - (t > t1 - 0.25 ? (t - (t1 - 0.25)) * 400 : 0);
+    win(66, y, 348, 58, '#0c1445', PAL.y, '#e0a030'); blit(ICON[icon], 80, y + 13, 2);
+    T(name + ' GET!', 124, y + 9, { f: 'b', sc: 2, col: '#fff' }); T('수입 의존 소재 → 국산화 성공!', 124, y + 37, { f: 'b', col: PAL.c });
+  });
+}
+
+// ═════════════ SCENE 4: 아이템 도감 = 사업 분야 (11~17.5) ═════════════
+const BIZ = [
+  { icon: 'glue', short: '접착제', name: '산업용 특수접착제', desc: '기능성 PP 접착제 · 커플링제 국산화!' },
+  { icon: 'nano', short: '나노입자', name: '기능성 나노입자', desc: '단분산 나노입자 · 마이크로비드!' },
+  { icon: 'marble', short: '인조대리석', name: '인조대리석', desc: '건축 · 인테리어용 고품질 인조대리석', badge: '2012' },
+  { icon: 'film', short: '필름', name: '라미네이팅 필름', desc: '통기성 필름 · 부직포 고기능성 필름', badge: '2015' },
+];
+function sItems(t) {
+  const lt = t - 11;
+  for (let y = -20; y < H; y += 20) for (let x = -20; x < W + 20; x += 20) { const ox = (lt * 12) % 40;
+    R(x + ox - 20, y + ((lt * 12) % 20), 20, 20, ((x + y) / 20) % 2 ? '#1b2a6b' : '#22337d'); }
+  win(16, 10, 448, 34); T('ITEM BOOK', 28, 16, { f: 'b', sc: 2, col: PAL.y }); T('이지켐 사업 분야', 452, 20, { f: 'b', al: 'r', col: PAL.c });
+  const sel = lt < 0.8 ? -1 : Math.min(3, Math.floor((lt - 0.8) / 1.5));
+  BIZ.forEach((b, i) => {
+    const t0 = 0.15 + 0.12 * i; if (lt < t0) return;
+    const x = 20 + i * 112, y = 52 + (1 - backOut((lt - t0) / 0.3)) * 40, on = i === sel;
+    win(x, y, 104, 108, on ? '#1f3a9e' : '#0c1445', on && Math.floor(lt * 6) % 2 ? PAL.y : '#fff', on ? '#e0a030' : '#5b8cff');
+    blit(ICON[b.icon], x + 20, y + 12 + (on ? Math.round(Math.sin(lt * 10) * 2) : 0), 4);
+    T(b.short, x + 52, y + 84, { f: 'b', al: 'c', col: on ? PAL.y : '#fff' });
+    if (b.badge) { const bw = txt(b.badge + ' NEW', 'b', '#fff').width + 6; R(x + 104 - bw + 4, y - 7, bw, 16, PAL.k); R(x + 105 - bw + 4, y - 6, bw - 2, 14, PAL.r); T(b.badge + ' NEW', x + 106 - bw / 2 + 2, y - 6, { f: 'b', al: 'c' }); }
+    if (on) { const cy = y - 8 + Math.round(Math.sin(lt * 8) * 1); for (let k = 0; k < 5; k++) R(x + 48 + k - 4 + 4, cy + k, 9 - k * 2, 1, PAL.y); }
+  });
+  win(16, 170, 448, 90);
+  if (sel >= 0) { const b = BIZ[sel], st = lt - 0.8 - sel * 1.5;
+    T(b.name, 32, 180, { f: 'b', sc: 2, col: PAL.y });
+    T(tw(b.desc, st * 32), 32, 212, { f: 'b' });
+    T('기술력', 32, 234, { f: 'b', col: PAL.c });
+    for (let k = 0; k < 12; k++) R(82 + k * 12, 236, 10, 10, k < st * 20 ? (k < 9 ? '#38b764' : PAL.y) : '#2b3570');
+    if (st > 0.6) T('MAX!', 232, 234, { f: 'b', col: PAL.y }); }
+  else T(tw('사업 분야를 선택하세요...', lt * 30), 32, 200, { f: 'b' });
+}
+
+// ═════════════ SCENE 5: 보스전 = R&D (17.5~23) ═════════════
+const BOSS = mk(130, 100, () => {});
+function drawBoss(t, flash) {
+  const x = BOSS.getContext('2d'); x.clearRect(0, 0, 130, 100);
+  const arm = Math.round(Math.sin(t * 6) * 3);
+  R(0, 30 + arm, 16, 26, PAL.k, x); R(2, 32 + arm, 12, 22, '#8b4a3c', x); R(114, 30 - arm, 16, 26, PAL.k, x); R(116, 32 - arm, 12, 22, '#8b4a3c', x);
+  R(12, 8, 106, 90, PAL.k, x); R(14, 10, 102, 86, '#3e2327', x);
+  for (let r = 0; r < 7; r++) for (let q = -1; q < 6; q++) { const bx = 14 + q * 20 + (r % 2) * 10, by = 10 + r * 12;
+    const x0 = Math.max(14, bx + 1), x1 = Math.min(116, bx + 19); if (x1 > x0) { R(x0, by + 1, x1 - x0, 10, (r + q) % 3 ? '#a0503f' : '#8b4a3c', x); R(x0, by + 1, x1 - x0, 2, '#c0705a', x); } }
+  for (const ex of [34, 80]) { R(ex, 30, 18, 14, PAL.k, x); R(ex + 2, 32, 14, 10, '#fff', x); R(ex + 3, 35, 6, 6, PAL.r, x); }
+  for (let s = 0; s < 8; s++) { R(32 + s * 2, 22 + s, 2, 3, PAL.k, x); R(96 - s * 2, 22 + s, 2, 3, PAL.k, x); }
+  R(38, 58, 54, 18, PAL.k, x); for (let s = 0; s < 6; s++) { R(40 + s * 9, 59, 7, 4, '#fff', x); R(44 + s * 9, 71, 7, 4, '#fff', x); }
+  if (flash) { x.globalCompositeOperation = 'source-atop'; R(0, 0, 130, 100, '#fff', x); x.globalCompositeOperation = 'source-over'; }
+  return BOSS;
+}
+function sBoss(t) {
+  const lt = t - 17.5;
+  R(0, 0, W, H, '#1a0f2e'); for (let i = 0; i < 5; i++) R(0, 90 + i * 16, W, 16, ['#1f1238','#241542','#2a184d','#311b58','#381e63'][i]);
+  if ((lt > 0.35 && lt < 0.45) || (lt > 0.55 && lt < 0.6)) R(0, 0, W, H, '#6a3fbf');
+  stars(t, 40, 4, 90);
+  R(0, 170, W, 100, '#2b1b4a'); for (let k = 0; k < 8; k++) R(0, 170 + Math.pow(k / 8, 1.8) * 100, W, 1, '#4a2f7a');
+  for (let i = -10; i <= 10; i++) for (let y = 170; y < 200; y += 2) R(240 + i * 40 * (1 + (y - 170) / 30), y, 1, 2, '#4a2f7a');
+  heroAt(64, 122 + Math.round(Math.sin(t * 4) * 1), t, 3, false);
+  const dead = t >= 21.0, bxy = [300, lerp(-110, 52, eo(lt / 0.45)) + Math.round(Math.sin(t * 3) * 2)];
+  const hits = [19.0, 20.3]; const flash = hits.some(h => t >= h && t < h + 0.3 && Math.floor((t - h) * 20) % 2 === 0);
+  if (!dead) { const bx = bxy[0] + (hits.some(h => t >= h && t < h + 0.25) ? Math.round(Math.sin(t * 90) * 3) : 0);
+    c.globalAlpha = .4; R(bx + 20, 176, 100, 8, '#000'); c.globalAlpha = 1; blit(drawBoss(t, flash), bx, bxy[1]);
+    const hp = t < 19.0 ? 100 : t < 20.3 ? lerp(100, 45, (t - 19.0) / 0.3) : lerp(45, 0, (t - 20.3) / 0.3);
+    if (lt > 0.5) { T('BOSS · 기술 장벽', bxy[0] + 65, 16, { f: 'b', col: '#ff8a8a', al: 'c', sh: PAL.k });
+      R(bxy[0], 32, 130, 10, PAL.k); R(bxy[0] + 2, 34, 126 * hp / 100, 6, hp > 50 ? '#38b764' : PAL.r); R(bxy[0] + 2, 34, 126 * hp / 100, 2, '#ffffff55'); } }
+  if (t >= 18.6 && t < 19.2) { const p = cl((t - 18.6) / 0.25), x1 = lerp(104, 310, p);
+    for (let x = 104; x < x1; x += 2) { const w = 5 + Math.round(Math.sin(x * 0.3 + t * 40) * 2); R(x, 146 - w - 30 * (x - 104) / 206, 2, w * 2, PAL.c); R(x, 146 - 2 - 30 * (x - 104) / 206, 2, 4, '#fff'); }
+    for (let k = 0; k < 6; k++) sparkle(310 + rnd(k + Math.floor(t * 20)) * 70, 70 + rnd(k + 9 + Math.floor(t * 20)) * 70, 3, '#fff'); }
+  if (t >= 19.9 && t < 20.5) for (let k = 0; k < 14; k++) { const p = cl((t - 19.9) / 0.4 - k * 0.03); if (p <= 0 || p >= 1) continue;
+    const x = lerp(104, 330, p) + rnd(k) * 20, y = 140 - 40 * p + Math.sin(p * 12 + k) * 12; circ(x, y, 3 + (k % 3), '#a7f070'); R(x - 1, y - 2, 2, 2, '#fff'); }
+  [[19.0, '-4500', 'CRITICAL!'], [20.3, '-5500', 'CLEAN!']].forEach(([h, d, w]) => { if (t >= h && t < h + 0.9) { const p = (t - h) / 0.9;
+    T(d, 360, 70 - p * 26, { f: 'b', sc: 3, col: '#fff', ol: PAL.r, al: 'c' }); T(w, 360, 110 - p * 10, { f: 'b', sc: 2, col: PAL.y, ol: PAL.k, al: 'c' }); } });
+  if (dead && t < 22.4) { const p = t - 21.0;
+    for (let k = 0; k < 3; k++) { const r = Math.round(p * 160 - k * 18); if (r > 0 && r < 110) { circ(365, 100, r, ['#ffcd4a', '#ef7d57', '#fff'][k]); circ(365, 100, Math.max(0, r - 6), '#1a0f2e'); } }
+    for (let k = 0; k < 36; k++) { const a = rnd(k) * Math.PI * 2, v = 80 + rnd(k + 40) * 160;
+      const x = 365 + Math.cos(a) * v * p, y = 100 + Math.sin(a) * v * p + 260 * p * p; R(x, y, 8, 5, k % 2 ? '#a0503f' : '#8b4a3c'); }
+    if (p < 0.2) { c.globalAlpha = 1 - p / 0.2; R(0, 0, W, H, '#fff'); c.globalAlpha = 1; } }
+  win(16, 200, 448, 62, '#0c1445');
+  const lines = [[0.5, '보스 「기술 장벽」이 앞길을 막았다!', ''], [1.1, '이지켐의 스킬! ▶ 반도체 CMP용 경면 연마제', '치명타! 표면이 거울처럼 매끈해졌다!'],
+    [2.4, '이지켐의 스킬! ▶ 건축용 포름알데히드 제거제', '유해물질 정화! 효과 최고!'], [3.5, '기술 장벽을 돌파했다!  EXP +9999', '']];
+  const cur = [...lines].reverse().find(l => lt >= l[0]);
+  if (cur) { T(tw(cur[1], (lt - cur[0]) * 50), 30, 210, { f: 'b' }); if (cur[2] && lt > cur[0] + 0.5) T(tw(cur[2], (lt - cur[0] - 0.5) * 50), 30, 234, { f: 'b', col: PAL.y }); }
+  if (t >= 21.8) { const y = lerp(-110, 44, backOut((t - 21.8) / 0.4));
+    win(52, y, 376, 112, '#2a1a00', PAL.y, '#e0a030');
+    T('★ ACHIEVEMENT UNLOCKED ★', 240, y + 10, { f: 'b', col: PAL.y, al: 'c' });
+    blit(ICON.trophy, 68, y + 34, 4);
+    T('INNO-BIZ 인증 획득!', 144, y + 38, { f: 'b', sc: 2 }); T('기술혁신형 중소기업', 144, y + 72, { f: 'b', col: PAL.c });
+    for (let k = 0; k < 6; k++) { const a = t * 3 + k; sparkle(240 + Math.cos(a) * 170, y + 56 + Math.sin(a * 1.3) * 60, 2 + (k % 2), '#fff'); } }
+}
+
+// ═════════════ SCENE 6: 월드맵 (23~26.5) ═════════════
+const PATH = [[110, 160], [180, 150], [258, 112], [330, 126], [404, 160]];
+const segLen = PATH.slice(1).map((p, i) => Math.hypot(p[0] - PATH[i][0], p[1] - PATH[i][1])); const TOT = segLen.reduce((a, b) => a + b);
+function along(d) { for (let i = 0; i < segLen.length; i++) { if (d <= segLen[i]) { const f = d / segLen[i]; return [lerp(PATH[i][0], PATH[i + 1][0], f), lerp(PATH[i][1], PATH[i + 1][1], f)]; } d -= segLen[i]; } return PATH[PATH.length - 1]; }
+function sMap(t) {
+  const lt = t - 23;
+  R(0, 0, W, H, '#1f5fbf');
+  for (let i = 0; i < 60; i++) { const x = (rnd(i) * 500 + lt * 8) % 500 - 10, y = rnd(i + 30) * H; if (Math.sin(t * 3 + i) > -0.2) R(x, y, 4, 1, '#4d8fe8'); }
+  const land = [[120,165,62],[190,140,58],[258,112,52],[320,150,48],[170,200,40],[250,180,42]], isle = [[404,166,30]];
+  for (const [x, y, r] of [...land, ...isle]) circ(x, y, r + 4, '#e8d08a');
+  for (const [x, y, r] of [...land, ...isle]) circ(x, y, r, '#58b848');
+  for (let i = 0; i < 80; i++) { const x = 60 + rnd(i) * 300, y = 80 + rnd(i + 5) * 150; if (land.some(([a, b, r]) => Math.hypot(x - a, y - b) < r - 6)) R(x, y, 2, 1, '#3f9a3a'); }
+  for (const [mx, my] of [[232, 92], [252, 80], [284, 90]]) { for (let s = 0; s < 16; s++) R(mx - s, my + s, s * 2 + 1, 1, s < 5 ? '#fff' : '#3a7d44'); }
+  for (const [x, y] of [[80,150],[92,190],[160,120],[200,196],[300,170],[330,150],[150,210]]) { R(x + 2, y + 6, 2, 4, '#7a4a2a'); circ(x + 3, y + 3, 4, '#2d7a3a'); R(x + 1, y + 1, 2, 1, '#6ccf5a'); }
+  const prog = cl((lt - 0.4) / 2.6) * TOT;
+  for (let d = 0; d < TOT; d += 7) { const [x, y] = along(d); R(x - 1, y, 3, 3, PAL.k); R(x - 1, y - 1, 3, 3, d <= prog ? PAL.y : '#fff'); }
+  blit(ICON.hq, 94, 128, 2); blit(ICON.factory, 242, 76, 2);
+  for (let k = 0; k < 3; k++) { const p = (t * 0.7 + k / 3) % 1; circ(268 + p * 10, 76 - p * 26, 2 + Math.round(p * 4), '#e8eef5'); }
+  const gx = 404, gy = 146, gr = 13; circ(gx, gy, gr + 1, PAL.k); circ(gx, gy, gr, '#2a8fe8');
+  for (let y = -gr; y <= gr; y++) for (let x = -gr; x <= gr; x++) { if (x * x + y * y > gr * gr - 2) continue;
+    const u = Math.floor((Math.asin(x / Math.sqrt(gr * gr - y * y + .01)) / Math.PI + .5) * 6 + t * 1.5), v = Math.floor((y + gr) / 5); if (rnd(u * 7 + v) > 0.55) R(gx + x, gy + y, 1, 1, '#58b848'); }
+  R(gx - 5, gy - 7, 3, 2, '#fff');
+  const lab = (x, y, s, on, col = '#fff') => { if (!on) return; const w = txt(s, 'b', col).width + 10; win(x - w / 2, y, w, 22, '#0c1445'); T(s, x, y + 4, { f: 'b', al: 'c', col }); };
+  lab(110, 170, '청주 본사', lt > 0.3); lab(258, 44, '괴산 공장', lt > 1.7); lab(404, 184, 'GLOBAL ▶', lt > 3.0, PAL.y);
+  const [hx, hy] = along(prog); heroAt(hx - 12, hy - 30, t, 2, lt > 0.4 && lt < 3.0);
+  win(16, 8, 448, 30, '#0c1445'); T('WORLD MAP', 28, 12, { f: 'b', sc: 2, col: PAL.y }); T('충북에서 세계로!', 452, 16, { f: 'b', al: 'r', col: PAL.c });
+  if (lt > 3.0) for (let k = 0; k < 5; k++) { const a = t * 4 + k * 1.26; sparkle(gx + Math.cos(a) * 24, gy + Math.sin(a) * 20, 2, '#fff'); }
+}
+
+// ═════════════ SCENE 7: STAGE CLEAR (26.5~30) ═════════════
+function sClear(t) {
+  const lt = t - 26.5;
+  ['#070a24','#0b1034','#10174a','#161f5c','#1d286e'].forEach((col, i) => R(0, i * 54, W, 54, col));
+  stars(t, 70, 3, 270);
+  for (const [tf, fx, fy, col] of TL.fireworks) {
+    if (t >= tf - 0.3 && t < tf) { const p = (t - tf + 0.3) / 0.3; R(fx, lerp(270, fy, eo(p)), 2, 5, '#fff'); R(fx, lerp(270, fy, eo(p)) + 5, 2, 4, '#ffcd4a'); }
+    if (t >= tf && t < tf + 1.4) { const p = t - tf;
+      for (let k = 0; k < 28; k++) { const a = k / 28 * Math.PI * 2, v = 55 + (k % 3) * 10; if (p > 1.0 && Math.floor(p * 20 + k) % 2) continue;
+        R(fx + Math.cos(a) * v * eo(p / 0.8), fy + Math.sin(a) * v * eo(p / 0.8) + 30 * p * p, 2, 2, k % 4 ? col : '#fff'); }
+      if (p < 0.1) circ(fx, fy, 8, '#fff'); }
+  }
+  const S = 'STAGE CLEAR!'; const ws = [...S].map(ch => txt(ch, 'b', '#fff').width * 3); let x = 240 - ws.reduce((a, b) => a + b) / 2;
+  [...S].forEach((ch, i) => { const p = lt - i * 0.05; if (p > 0) T(ch, x, 12 - 30 * (1 - backOut(p / 0.35)) + Math.round(Math.sin(t * 8 + i) * 2), { f: 'b', sc: 3, col: ['#ffcd4a','#73eff7','#ff8ad8','#a7f070'][(i + Math.floor(t * 6)) % 4], ol: PAL.k }); x += ws[i]; });
+  if (lt > 0.3) plate(240, 100, cl(backOut((lt - 0.3) / 0.4), 0, 1.2));
+  if (lt > 0.3) { const jy = -Math.abs(Math.sin((lt - 0.3) * 6)) * 18; heroAt(56, 104 + jy, t, 2, false); heroAt(400, 104 + jy * 0.8, t + .3, 2, false); }
+  if (lt > 0.8) { T('정밀화학소재 산업의', 240, 146, { f: 'b', col: PAL.c, ol: PAL.k, al: 'c' }); T('글로벌 TOP TIER를 향하여!', 240, 162, { f: 'b', sc: 2, col: '#fff', ol: PAL.k, al: 'c' }); }
+  if (lt > 1.3) { T('CONTINUE?', 150, 198, { f: 'b', col: PAL.y, sh: PAL.k }); if (Math.floor(lt * 3) % 2 === 0) T('▶', 220, 198, { f: 'b', col: '#fff' }); T('www.easychem.co.kr', 236, 198, { f: 'b', col: '#fff', sh: PAL.k }); }
+  if (lt > 1.6) T('충북 청주시 흥덕구 2순환로 742번길 31', 240, 220, { col: '#b9c4ee', al: 'c' });
+  if (lt > 2.2) T('THANK YOU FOR PLAYING!', 240, 244, { f: 'b', col: Math.floor(t * 6) % 2 ? PAL.c : '#fff', al: 'c' });
+}
+
+// ── 전환 효과(픽셀 블록 와이프) · 화면 흔들림 · 합성 ──
+function wipe(t) { for (const tb of TL.cuts) { const d = Math.abs(t - tb); if (d >= 0.3) continue; const p = 1 - d / 0.3;
+  for (let cy = 0; cy < 17; cy++) for (let cx = 0; cx < 30; cx++) { const s = Math.round(16 * cl(p * 2.2 - (cx + cy) / 46)); if (s > 0) R(cx * 16 + 8 - s / 2, cy * 16 + 8 - s / 2, s, s, '#000'); } } }
+function shake(t) { let m = 0; for (const [s, d, a] of TL.shakes) if (t >= s && t < s + d) m = Math.max(m, a * (1 - (t - s) / d));
+  return m ? [Math.round(Math.sin(t * 97) * m), Math.round(Math.cos(t * 83) * m)] : [0, 0]; }
+const OVL = mk(1920, 1080, x => { for (let y = 3; y < 1080; y += 4) R(0, y, 1920, 1, 'rgba(0,0,0,0.22)', x);
+  const g = x.createRadialGradient(960, 540, 500, 960, 540, 1150); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.45)'); x.fillStyle = g; x.fillRect(0, 0, 1920, 1080); });
+
+function renderAt(t) {
+  c.globalAlpha = 1; c.imageSmoothingEnabled = false; R(0, 0, W, H, '#000');
+  if (t < 3.5) sTitle(t); else if (t < 5.5) sCard(t); else if (t < 11) sStage(t); else if (t < 17.5) sItems(t);
+  else if (t < 23) sBoss(t); else if (t < 26.5) sMap(t); else sClear(t);
+  wipe(t);
+  if (t > TL.end - 0.5) { c.globalAlpha = cl((t - TL.end + 0.5) / 0.5); R(0, 0, W, H, '#000'); c.globalAlpha = 1; }
+  const [sx, sy] = shake(t);
+  o.fillStyle = '#000'; o.fillRect(0, 0, 1920, 1080); o.imageSmoothingEnabled = false;
+  o.drawImage(L, sx * SC, sy * SC, 1920, 1080); o.drawImage(OVL, 0, 0);
+}
+window.renderAt = renderAt;
+
+// ── 브라우저 미리보기: 클릭 시 사운드와 함께 재생 ──
+if (!location.search.includes('render')) {
+  const bgm = new Audio('assets/bgm.wav'); let t0 = performance.now();
+  O.onclick = () => { t0 = performance.now(); bgm.currentTime = 0; bgm.play().catch(() => {}); };
+  ready.then(() => (function loop() { renderAt(((performance.now() - t0) / 1000) % TL.end); requestAnimationFrame(loop); })());
+}
+</script>
+</body>
+</html>
